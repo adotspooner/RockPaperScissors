@@ -21,7 +21,20 @@ pub fn build(b: *std.Build) void {
 
     exe_mod.addCSourceFiles(.{
         .files = &.{"RockPaperScissors/main.c"},
-        .flags = &.{ "-std=c23", "-Wall", "-Wextra", "-pedantic", "-Werror" },
+        .flags = &.{
+            "-std=c23",
+            "-Wall",
+            "-Wextra",
+            "-pedantic",
+            "-Werror",
+            "-Wmissing-prototypes",
+            "-Wmissing-variable-declarations",
+            "-Wconditional-uninitialized",
+            "-Wformat-signedness",
+            "-Wdouble-promotion",
+            "-Wshadow",
+            "-Wswitch-enum",
+        },
     });
 
     exe_mod.addIncludePath(b.path("raylib-5.0_linux_amd64/include"));
