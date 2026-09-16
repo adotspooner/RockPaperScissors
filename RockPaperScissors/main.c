@@ -174,17 +174,18 @@ int main(void)
             }
 
             struct Coord direction;
+            int flee = (closestHunter != -1) &&
+                       (closestVictim == -1 || minHunterDistance < minDistance);
+
             if ((closestVictim == -1 && closestHunter == -1) || centerLength > (WINDOW_HEIGHT / 2)) {
                 direction.x = (center.x - hx) / centerLength;
                 direction.y = (center.y - hy) / centerLength;
             }
-            else if (closestVictim != -1 && minHunterDistance < minDistance) {
+            else if (flee) {
                 float vx = entities[closestHunter].position.x;
                 float vy = entities[closestHunter].position.y;
-                direction.x = (vx - hx) / minDistance;
-                direction.y = (vy - hy) / minDistance;
-                direction.x *= -1;
-                direction.y *= -1;
+                direction.x = -(vx - hx) / minHunterDistance;
+                direction.y = -(vy - hy) / minHunterDistance;
             }
             else {
                 float vx = entities[closestVictim].position.x;
@@ -246,17 +247,17 @@ int main(void)
 
         unsigned long cstd = __STDC_VERSION__;
 
-        sprintf_s(str, sizeof(str), "R: %d", rC);
+        snprintf(str, sizeof(str), "R: %d", rC);
         DrawText(str, 20, 50, 24, BLACK);
-        sprintf_s(str, sizeof(str), "P: %d", pC);
+        snprintf(str, sizeof(str), "P: %d", pC);
         DrawText(str, 120, 50, 24, BLACK);
-        sprintf_s(str, sizeof(str), "S: %d", sC);
+        snprintf(str, sizeof(str), "S: %d", sC);
         DrawText(str, 220, 50, 24, BLACK);
 
-        sprintf_s(str, sizeof(str), "CSTD: %d", cstd);
+        snprintf(str, sizeof(str), "CSTD: %d", cstd);
         DrawText(str, WINDOW_WIDTH - 350, 50, 24, BLACK);
         int fps = GetFPS();
-        sprintf_s(str, sizeof(str), "FPS: %d", fps);
+        snprintf(str, sizeof(str), "FPS: %d", fps);
         DrawText(str, WINDOW_WIDTH - 150, 50, 24, BLACK);
 
         EndDrawing();

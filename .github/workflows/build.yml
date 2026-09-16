@@ -1,0 +1,32 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: linux-x86_64
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build
+        run: zig build -Doptimize=ReleaseFast --summary all
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: RockPaperScissors-linux-x86_64
+          path: |
+            zig-out/bin/RockPaperScissors
+            assets/
+          if-no-files-found: error
+          retention-days: 1
