@@ -1,3 +1,13 @@
+### Zig ###
+.zig-cache/
+zig-out/
+
+### Vim + Nano ###
+*.swp
+*.swo
+*.swn
+.*.sw[a-p]
+
 # Created by https://www.toptal.com/developers/gitignore/api/visualstudio
 # Edit at https://www.toptal.com/developers/gitignore?templates=visualstudio
 

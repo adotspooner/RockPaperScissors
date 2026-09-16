@@ -1,0 +1,45 @@
+name: release
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'      # version core
+      - '[0-9]+.[0-9]+.[0-9]+-*'    # with pre-release
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: linux-x86_64
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Build
+        run: zig build -Doptimize=ReleaseFast --summary all
+
+      # The binary loads assets/ by relative path, so ship the whole directory.
+      - name: Package
+        run: |
+          NAME=RockPaperScissors-${GITHUB_REF_NAME}-linux-x86_64
+          mkdir -p "$NAME"
+          cp zig-out/bin/RockPaperScissors "$NAME/"
+          cp -r assets "$NAME/"
+          cp LICENSE README.md "$NAME/"
+          tar czf "$NAME.tar.gz" "$NAME"
+          sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            *.tar.gz
+            *.tar.gz.sha256
+          generate_release_notes: true
+          # A "-" after the version core means <pre-release> per the SemVer grammar.
+          prerelease: ${{ contains(github.ref_name, '-') }}
