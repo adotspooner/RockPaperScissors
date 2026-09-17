@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
 
     exe_mod.addCSourceFiles(.{
         .files = &.{"RockPaperScissors/main.c"},
-        .flags = &.{},
+        .flags = &.{ "-std=c23", "-Wall", "-Wextra", "-pedantic", "-Werror" },
     });
 
     exe_mod.addIncludePath(b.path("raylib-5.0_linux_amd64/include"));

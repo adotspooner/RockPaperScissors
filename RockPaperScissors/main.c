@@ -149,9 +149,6 @@ int main(void)
             for (int k = 0; k < ENTITY_COUNT; k += 1) {
 
                 if (entities[k].type == victimType) {
-                    float cx = entities[k].position.x;
-                    float cy = entities[k].position.y;
-
                     float length = VectorLength(entities[k].position, entities[i].position);
 
                     if (length <= minDistance) {
@@ -160,9 +157,6 @@ int main(void)
                     }
                 }
                 else if (entities[k].type == hunterType) {
-                    float cx = entities[k].position.x;
-                    float cy = entities[k].position.y;
-
                     float length = VectorLength(entities[k].position, entities[i].position);
 
                     if (length <= minHunterDistance) {
@@ -254,7 +248,7 @@ int main(void)
         snprintf(str, sizeof(str), "S: %d", sC);
         DrawText(str, 220, 50, 24, BLACK);
 
-        snprintf(str, sizeof(str), "CSTD: %d", cstd);
+        snprintf(str, sizeof(str), "CSTD: %lu", cstd);
         DrawText(str, WINDOW_WIDTH - 350, 50, 24, BLACK);
         int fps = GetFPS();
         snprintf(str, sizeof(str), "FPS: %d", fps);
