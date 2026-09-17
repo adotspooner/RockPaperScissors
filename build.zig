@@ -3,9 +3,18 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
+    const target = b.standardTargetOptions(.{
+        .default_target = .{
+            .cpu_arch = .x86_64,
+            .os_tag = .linux,
+            .abi = .gnu,
+            .cpu_model = .baseline,
+        },
+    });
+
     const exe_mod = b.createModule(.{
         .root_source_file = null,
-        .target = b.graph.host,
+        .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
