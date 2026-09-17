@@ -21,12 +21,16 @@ jobs:
       - name: Build
         run: zig build -Doptimize=ReleaseFast --summary all
 
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp zig-out/bin/RockPaperScissors dist/
+          cp -r assets dist/
+
       - name: Upload binary
         uses: actions/upload-artifact@v7
         with:
           name: RockPaperScissors-linux-x86_64
-          path: |
-            zig-out/bin/RockPaperScissors
-            assets/
+          path: dist/
           if-no-files-found: error
           retention-days: 1
