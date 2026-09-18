@@ -21,11 +21,38 @@ pub fn build(b: *std.Build) void {
 
     exe_mod.addCSourceFiles(.{
         .files = &.{"RockPaperScissors/main.c"},
-        .flags = &.{ "-std=c23", "-Wall", "-Wextra", "-pedantic", "-Werror" },
+        .flags = &.{
+            "-std=c23",
+            "-Wall",
+            "-Wextra",
+            "-pedantic",
+            "-Werror",
+            "-Wmissing-prototypes",
+            "-Wmissing-variable-declarations",
+            "-Wconditional-uninitialized",
+            "-Wformat-signedness",
+            "-Wdouble-promotion",
+            "-Wshadow",
+            "-Wswitch-enum",
+        },
     });
 
     exe_mod.addIncludePath(b.path("raylib-5.0_linux_amd64/include"));
     exe_mod.addObjectFile(b.path("raylib-5.0_linux_amd64/lib/libraylib.a"));
+
+    const particles_mod = b.createModule(.{
+        .root_source_file = b.path("RockPaperScissors/particles.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const particles_lib = b.addLibrary(.{
+        .name = "particles",
+        .linkage = .static,
+        .root_module = particles_mod,
+    });
+
+    exe_mod.linkLibrary(particles_lib);
 
     const exe = b.addExecutable(.{
         .name = "RockPaperScissors",

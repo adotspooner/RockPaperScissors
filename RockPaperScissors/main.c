@@ -1,4 +1,5 @@
 #include "raylib.h"
+#include "particles.h"
 #include "math.h"
 #include "stdio.h"
 #include "time.h"
@@ -12,7 +13,33 @@
 #define SPRITE_WIDTH 64
 #define SPRITE_HEIGHT 64
 
-#define SPEED 64.0f
+#define SPEED 95.0f
+
+// Burst mechanics. Entities cruise, then commit to a short explosive move:
+// a hunter LUNGES at prey in a straight line, prey JUKES sideways out of it.
+// A burst is committed - steering is ignored until it ends - so lunges can
+// miss, and a miss leaves the hunter winded and briefly helpless.
+#define BURST_SPEED 420.0f      // speed during a lunge or juke
+#define BURST_TIME 0.20f        // how long a burst lasts
+#define RECOVER_TIME 0.40f      // helpless window after a burst
+#define RECOVER_MULT 0.45f      // speed while winded
+// Rest before another burst is allowed. Without this both sides chain-burst
+// forever at the same average speed and prey is literally uncatchable.
+// Prey rests longer than hunters - that gap is what lets a hunt close.
+#define JUKE_REST 0.85f
+#define LUNGE_REST 0.15f
+// A chaser at the same speed as a fleer never closes the gap - pursuit is
+// only decidable if the hunter is faster. This is what ends a round.
+#define CHASE_MULT 1.20f
+#define LUNGE_RANGE 150.0f      // hunter commits inside this
+#define JUKE_RANGE 120.0f       // prey bolts inside this
+
+// Soft rectangular walls. A hard circular boundary used to pin fleeing
+// entities at a fixed radius and slide them into an arc; this ramps an
+// inward nudge over the last stretch instead, and uses the whole window.
+#define WALL_MARGIN 280.0f      // how far in the push starts
+#define WALL_FORCE 2.4f         // weight of the push against steering
+#define EDGE (SPRITE_WIDTH / 2) // keep sprites fully on screen
 
 enum Type {
     ROCK,
@@ -28,13 +55,37 @@ struct Coord {
 struct Entity {
     enum Type type;
     struct Coord position;
+    float burst;              // >0 while committed to burstDir
+    float recover;            // >0 while winded
+    float cooldown;           // >0 while another burst is disallowed
+    struct Coord burstDir;
 };
 
-float VectorLength(struct Coord a, struct Coord b) {
+static float VectorLength(struct Coord a, struct Coord b) {
     return sqrtf((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
 }
 
-enum Type GetVictimType(enum Type hunterType) {
+// Normalise a vector, with a stable fallback when it has no length. Two
+// entities can land on the exact same position, and dividing by that zero
+// distance yields 0/0 = NaN - which freezes the entity forever, since every
+// comparison against NaN is false so it is never caught and never moves.
+static struct Coord SafeDirection(float dx, float dy) {
+    struct Coord d;
+    float len = sqrtf(dx * dx + dy * dy);
+
+    if (len > 0.0001f) {
+        d.x = dx / len;
+        d.y = dy / len;
+    }
+    else {
+        d.x = 1.0f;
+        d.y = 0.0f;
+    }
+
+    return d;
+}
+
+static enum Type GetVictimType(enum Type hunterType) {
     switch (hunterType) {
     case ROCK:
         return SCISSORS;
@@ -45,7 +96,7 @@ enum Type GetVictimType(enum Type hunterType) {
     }
 }
 
-enum Type GetHunterType(enum Type victimType) {
+static enum Type GetHunterType(enum Type victimType) {
     switch (victimType) {
     case ROCK:
         return PAPER;
@@ -56,9 +107,23 @@ enum Type GetHunterType(enum Type victimType) {
     }
 }
 
-struct Entity entities[ENTITY_COUNT];
+static struct Entity entities[ENTITY_COUNT];
 
-void initEntities() {
+static Color GetTypeColor(enum Type t) {
+    switch (t) {
+    case ROCK:
+        return BROWN;
+    case PAPER:
+        return SKYBLUE;
+    case SCISSORS:
+        return RED;
+    }
+    return WHITE;
+}
+
+static void initEntities(void) {
+    psReset((unsigned long long)time(NULL));
+
     for (int i = 0; i < ENTITY_COUNT; i += 1) {
         int x = rand() % (WINDOW_WIDTH - 50);
         int y = rand() % (WINDOW_HEIGHT - 50);
@@ -71,7 +136,7 @@ void initEntities() {
         case 1:
             t = PAPER;
             break;
-        case 2:
+        default:
             t = SCISSORS;
             break;
         }
@@ -79,6 +144,11 @@ void initEntities() {
         entities[i].type = t;
         entities[i].position.x = (float)x;
         entities[i].position.y = (float)y;
+        entities[i].burst = 0.0f;
+        entities[i].recover = 0.0f;
+        entities[i].cooldown = 0.0f;
+        entities[i].burstDir.x = 0.0f;
+        entities[i].burstDir.y = 0.0f;
     }
 }
 
@@ -126,6 +196,8 @@ int main(void)
         // TODO: Update your variables here
         //----------------------------------------------------------------------------------
 
+        float dt = GetFrameTime();
+
         for (int i = 0; i < ENTITY_COUNT; i += 1) {
 
             struct Coord center;
@@ -137,8 +209,6 @@ int main(void)
             enum Type hunterType = GetHunterType(t);
             float hx = entities[i].position.x;
             float hy = entities[i].position.y;
-
-            float centerLength = VectorLength(center, entities[i].position);
 
             int closestVictim = -1;
             float minDistance = 1000000;
@@ -171,31 +241,129 @@ int main(void)
             int flee = (closestHunter != -1) &&
                        (closestVictim == -1 || minHunterDistance < minDistance);
 
-            if ((closestVictim == -1 && closestHunter == -1) || centerLength > (WINDOW_HEIGHT / 2)) {
-                direction.x = (center.x - hx) / centerLength;
-                direction.y = (center.y - hy) / centerLength;
+            if (closestVictim == -1 && closestHunter == -1) {
+                direction = SafeDirection(center.x - hx, center.y - hy);
             }
             else if (flee) {
                 float vx = entities[closestHunter].position.x;
                 float vy = entities[closestHunter].position.y;
-                direction.x = -(vx - hx) / minHunterDistance;
-                direction.y = -(vy - hy) / minHunterDistance;
+                direction = SafeDirection(hx - vx, hy - vy);
             }
             else {
                 float vx = entities[closestVictim].position.x;
                 float vy = entities[closestVictim].position.y;
-                direction.x = (vx - hx) / minDistance;
-                direction.y = (vy - hy) / minDistance;
+                direction = SafeDirection(vx - hx, vy - hy);
             }
 
-            entities[i].position.x += direction.x * GetFrameTime() * SPEED;
-            entities[i].position.y += direction.y * GetFrameTime() * SPEED;
+            // Ramp an inward push over the last WALL_MARGIN pixels of each edge
+            // and blend it into the steering, so entities curve away from walls
+            // instead of snapping to a new target.
+            float wx = 0.0f;
+            float wy = 0.0f;
+
+            if (hx < WALL_MARGIN) {
+                wx += (WALL_MARGIN - hx) / WALL_MARGIN;
+            }
+            else if (hx > WINDOW_WIDTH - WALL_MARGIN) {
+                wx -= (hx - (WINDOW_WIDTH - WALL_MARGIN)) / WALL_MARGIN;
+            }
+
+            if (hy < WALL_MARGIN) {
+                wy += (WALL_MARGIN - hy) / WALL_MARGIN;
+            }
+            else if (hy > WINDOW_HEIGHT - WALL_MARGIN) {
+                wy -= (hy - (WINDOW_HEIGHT - WALL_MARGIN)) / WALL_MARGIN;
+            }
+
+            if (wx != 0.0f || wy != 0.0f) {
+                direction.x += wx * WALL_FORCE;
+                direction.y += wy * WALL_FORCE;
+
+                float dlen = sqrtf(direction.x * direction.x + direction.y * direction.y);
+                if (dlen > 0.0001f) {
+                    direction.x /= dlen;
+                    direction.y /= dlen;
+                }
+            }
+
+            // Hunting is faster than running; that margin is what closes a hunt.
+            float speed = flee ? SPEED : SPEED * CHASE_MULT;
+
+            if (entities[i].cooldown > 0.0f) {
+                entities[i].cooldown -= dt;
+            }
+
+            if (entities[i].burst > 0.0f) {
+                // Committed. Steering is ignored, which is what makes a miss possible.
+                direction = entities[i].burstDir;
+                speed = BURST_SPEED;
+                entities[i].burst -= dt;
+                if (entities[i].burst <= 0.0f) {
+                    entities[i].recover = RECOVER_TIME;
+                }
+            }
+            else if (entities[i].recover > 0.0f) {
+                speed = SPEED * RECOVER_MULT;
+                entities[i].recover -= dt;
+            }
+            else if (entities[i].cooldown <= 0.0f
+                     && closestHunter != -1 && minHunterDistance < JUKE_RANGE) {
+                // Bolt at 60 degrees off straight-away: keeps ground gained while
+                // cutting hard across the hunter's committed line.
+                struct Coord away = SafeDirection(hx - entities[closestHunter].position.x,
+                                                  hy - entities[closestHunter].position.y);
+                float ax = away.x;
+                float ay = away.y;
+                float s = (rand() & 1) ? 1.0f : -1.0f;
+                entities[i].burstDir.x = ax * 0.5f - ay * 0.866f * s;
+                entities[i].burstDir.y = ay * 0.5f + ax * 0.866f * s;
+                entities[i].burst = BURST_TIME;
+                entities[i].cooldown = BURST_TIME + RECOVER_TIME + JUKE_REST;
+                direction = entities[i].burstDir;
+                speed = BURST_SPEED;
+            }
+            else if (entities[i].cooldown <= 0.0f
+                     && closestVictim != -1 && minDistance < LUNGE_RANGE) {
+                // Pick a line and go. No course correction from here.
+                entities[i].burstDir = direction;
+                entities[i].burst = BURST_TIME;
+                entities[i].cooldown = BURST_TIME + RECOVER_TIME + LUNGE_REST;
+                speed = BURST_SPEED;
+            }
+
+            entities[i].position.x += direction.x * dt * speed;
+            entities[i].position.y += direction.y * dt * speed;
+
+            // A burst ignores steering entirely, so it can still reach the edge.
+            // Reflect it rather than clamping, so a juke rebounds off the wall.
+            if (entities[i].position.x < EDGE) {
+                entities[i].position.x = EDGE;
+                entities[i].burstDir.x = -entities[i].burstDir.x;
+            }
+            else if (entities[i].position.x > WINDOW_WIDTH - EDGE) {
+                entities[i].position.x = WINDOW_WIDTH - EDGE;
+                entities[i].burstDir.x = -entities[i].burstDir.x;
+            }
+
+            if (entities[i].position.y < EDGE) {
+                entities[i].position.y = EDGE;
+                entities[i].burstDir.y = -entities[i].burstDir.y;
+            }
+            else if (entities[i].position.y > WINDOW_HEIGHT - EDGE) {
+                entities[i].position.y = WINDOW_HEIGHT - EDGE;
+                entities[i].burstDir.y = -entities[i].burstDir.y;
+            }
 
             if (minDistance < (float)SPRITE_WIDTH * 0.9f) {
+                psSpawnCaptureBurst(entities[closestVictim].position.x,
+                                    entities[closestVictim].position.y,
+                                    GetTypeColor(t));
                 entities[closestVictim].type = t;
             }
 
         }
+
+        psUpdate(dt);
 
         // Draw
         //----------------------------------------------------------------------------------
@@ -214,8 +382,8 @@ int main(void)
             float x = entities[i].position.x;
             float y = entities[i].position.y;
 
-            float sx = x - ((float)SPRITE_WIDTH / 2.0);
-            float sy = y - ((float)SPRITE_HEIGHT / 2.0);
+            float sx = x - ((float)SPRITE_WIDTH / 2.0f);
+            float sy = y - ((float)SPRITE_HEIGHT / 2.0f);
 
             struct Vector2 pos;
             pos.x = sx;
@@ -239,13 +407,15 @@ int main(void)
             //DrawLine(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2, x, y, BLACK);
         }
 
+        psDraw();
+
         unsigned long cstd = __STDC_VERSION__;
 
-        snprintf(str, sizeof(str), "R: %d", rC);
+        snprintf(str, sizeof(str), "R: %u", rC);
         DrawText(str, 20, 50, 24, BLACK);
-        snprintf(str, sizeof(str), "P: %d", pC);
+        snprintf(str, sizeof(str), "P: %u", pC);
         DrawText(str, 120, 50, 24, BLACK);
-        snprintf(str, sizeof(str), "S: %d", sC);
+        snprintf(str, sizeof(str), "S: %u", sC);
         DrawText(str, 220, 50, 24, BLACK);
 
         snprintf(str, sizeof(str), "CSTD: %lu", cstd);
@@ -257,7 +427,7 @@ int main(void)
         EndDrawing();
 
         if (rC == ENTITY_COUNT || pC == ENTITY_COUNT || sC == ENTITY_COUNT) {
-            WaitTime(2.5f);
+            WaitTime(2.5);
             initEntities();
         }
         //----------------------------------------------------------------------------------
