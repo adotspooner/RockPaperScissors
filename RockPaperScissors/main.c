@@ -1,4 +1,5 @@
 #include "raylib.h"
+#include "particles.h"
 #include "math.h"
 #include "stdio.h"
 #include "time.h"
@@ -39,20 +40,6 @@
 #define WALL_MARGIN 280.0f      // how far in the push starts
 #define WALL_FORCE 2.4f         // weight of the push against steering
 #define EDGE (SPRITE_WIDTH / 2) // keep sprites fully on screen
-
-// Capture effect: a puff of debris in the winning type's colour.
-#define PARTICLE_COUNT 3072     // shared pool, oldest simply run out
-#define BURST_PARTICLES 34      // spawned per capture
-#define PARTICLE_LIFE 0.85f
-#define PARTICLE_SPEED 440.0f
-#define PARTICLE_DRAG 2.2f
-#define PARTICLE_SIZE 11.0f
-
-// Shockwave ring thrown off at the moment of capture.
-#define SHOCK_COUNT 96
-#define SHOCK_LIFE 0.28f
-#define SHOCK_RADIUS 110.0f
-#define SHOCK_THICKNESS 9.0f
 
 enum Type {
     ROCK,
@@ -122,23 +109,6 @@ static enum Type GetHunterType(enum Type victimType) {
 
 static struct Entity entities[ENTITY_COUNT];
 
-struct Particle {
-    struct Coord position;
-    struct Coord velocity;
-    float life;               // seconds remaining, <=0 means the slot is free
-    Color color;
-};
-
-static struct Particle particles[PARTICLE_COUNT];
-
-struct Shockwave {
-    struct Coord position;
-    float life;
-    Color color;
-};
-
-static struct Shockwave shockwaves[SHOCK_COUNT];
-
 static Color GetTypeColor(enum Type t) {
     switch (t) {
     case ROCK:
@@ -151,52 +121,8 @@ static Color GetTypeColor(enum Type t) {
     return WHITE;
 }
 
-static float RandUnit(void) {
-    return (float)rand() / (float)RAND_MAX;
-}
-
-// Scatter debris from a capture. Silently does nothing if the pool is full,
-// which only happens during a pile-up and is not worth handling.
-static void spawnCaptureBurst(float x, float y, Color c) {
-    int spawned = 0;
-
-    for (int p = 0; p < PARTICLE_COUNT && spawned < BURST_PARTICLES; p += 1) {
-        if (particles[p].life > 0.0f) {
-            continue;
-        }
-
-        float angle = RandUnit() * 2.0f * PI;
-        float speed = PARTICLE_SPEED * (0.35f + 0.65f * RandUnit());
-
-        particles[p].position.x = x;
-        particles[p].position.y = y;
-        particles[p].velocity.x = cosf(angle) * speed;
-        particles[p].velocity.y = sinf(angle) * speed;
-        particles[p].life = PARTICLE_LIFE * (0.7f + 0.3f * RandUnit());
-        particles[p].color = c;
-        spawned += 1;
-    }
-
-    for (int s = 0; s < SHOCK_COUNT; s += 1) {
-        if (shockwaves[s].life > 0.0f) {
-            continue;
-        }
-
-        shockwaves[s].position.x = x;
-        shockwaves[s].position.y = y;
-        shockwaves[s].life = SHOCK_LIFE;
-        shockwaves[s].color = c;
-        break;
-    }
-}
-
 static void initEntities(void) {
-    for (int p = 0; p < PARTICLE_COUNT; p += 1) {
-        particles[p].life = 0.0f;
-    }
-    for (int s = 0; s < SHOCK_COUNT; s += 1) {
-        shockwaves[s].life = 0.0f;
-    }
+    psReset((unsigned long long)time(NULL));
 
     for (int i = 0; i < ENTITY_COUNT; i += 1) {
         int x = rand() % (WINDOW_WIDTH - 50);
@@ -429,36 +355,15 @@ int main(void)
             }
 
             if (minDistance < (float)SPRITE_WIDTH * 0.9f) {
-                spawnCaptureBurst(entities[closestVictim].position.x,
-                                  entities[closestVictim].position.y,
-                                  GetTypeColor(t));
+                psSpawnCaptureBurst(entities[closestVictim].position.x,
+                                    entities[closestVictim].position.y,
+                                    GetTypeColor(t));
                 entities[closestVictim].type = t;
             }
 
         }
 
-        for (int p = 0; p < PARTICLE_COUNT; p += 1) {
-            if (particles[p].life <= 0.0f) {
-                continue;
-            }
-
-            particles[p].life -= dt;
-            particles[p].position.x += particles[p].velocity.x * dt;
-            particles[p].position.y += particles[p].velocity.y * dt;
-
-            float drag = 1.0f - PARTICLE_DRAG * dt;
-            if (drag < 0.0f) {
-                drag = 0.0f;
-            }
-            particles[p].velocity.x *= drag;
-            particles[p].velocity.y *= drag;
-        }
-
-        for (int s = 0; s < SHOCK_COUNT; s += 1) {
-            if (shockwaves[s].life > 0.0f) {
-                shockwaves[s].life -= dt;
-            }
-        }
+        psUpdate(dt);
 
         // Draw
         //----------------------------------------------------------------------------------
@@ -502,58 +407,7 @@ int main(void)
             //DrawLine(WINDOW_WIDTH / 2, WINDOW_HEIGHT / 2, x, y, BLACK);
         }
 
-        for (int s = 0; s < SHOCK_COUNT; s += 1) {
-            if (shockwaves[s].life <= 0.0f) {
-                continue;
-            }
-
-            // Expands outward as it dies, thinning and fading as it goes.
-            float s01 = shockwaves[s].life / SHOCK_LIFE;
-            float grow = 1.0f - s01;
-
-            struct Vector2 spos;
-            spos.x = shockwaves[s].position.x;
-            spos.y = shockwaves[s].position.y;
-
-            float outer = SHOCK_RADIUS * grow;
-            float inner = outer - SHOCK_THICKNESS * s01;
-            if (inner < 0.0f) {
-                inner = 0.0f;
-            }
-
-            Color sc = shockwaves[s].color;
-            sc.a = (unsigned char)(230.0f * s01);
-
-            DrawRing(spos, inner, outer, 0.0f, 360.0f, 32, sc);
-        }
-
-        for (int p = 0; p < PARTICLE_COUNT; p += 1) {
-            if (particles[p].life <= 0.0f) {
-                continue;
-            }
-
-            // Shrink and fade together over the particle's remaining life.
-            float t01 = particles[p].life / PARTICLE_LIFE;
-            if (t01 > 1.0f) {
-                t01 = 1.0f;
-            }
-
-            struct Vector2 ppos;
-            ppos.x = particles[p].position.x;
-            ppos.y = particles[p].position.y;
-
-            // Flash white at the instant of impact, cooling to the type colour.
-            float heat = t01 * t01 * t01;
-
-            Color base = particles[p].color;
-            Color pc;
-            pc.r = (unsigned char)(base.r + (255.0f - base.r) * heat);
-            pc.g = (unsigned char)(base.g + (255.0f - base.g) * heat);
-            pc.b = (unsigned char)(base.b + (255.0f - base.b) * heat);
-            pc.a = (unsigned char)(255.0f * t01);
-
-            DrawCircleV(ppos, PARTICLE_SIZE * (0.30f + 0.70f * t01), pc);
-        }
+        psDraw();
 
         unsigned long cstd = __STDC_VERSION__;
 
